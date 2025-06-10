@@ -1,0 +1,92 @@
+---
+- name: Install and Configure Minecraft Server
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Ensure Python 3 is installed
+      ansible.builtin.yum:
+        name: python3
+        state: present
+
+    - name: Download Amazon Corretto 21 tarball
+      ansible.builtin.get_url:
+        url: https://corretto.aws/downloads/latest/amazon-corretto-21-x64-linux-jdk.tar.gz
+        dest: /tmp/amazon-corretto-21-x64-linux-jdk.tar.gz
+        mode: '0644'
+
+    - name: Create directory for Amazon Corretto 21 JDK
+      ansible.builtin.file:
+        path: /usr/lib/jvm/amazon-corretto-21-x64-linux-jdk
+        state: directory
+
+    - name: Extract Amazon Corretto 21 JDK
+      ansible.builtin.unarchive:
+        src: /tmp/amazon-corretto-21-x64-linux-jdk.tar.gz
+        dest: /usr/lib/jvm/amazon-corretto-21-x64-linux-jdk
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+      args:
+        creates: /usr/lib/jvm/amazon-corretto-21-x64-linux-jdk/bin/java
+
+    - name: Set java alternatives for Amazon Corretto 21
+      ansible.builtin.command: >
+        alternatives --install /usr/bin/java java /usr/lib/jvm/amazon-corretto-21-x64-linux-jdk/bin/java 1
+      args:
+        creates: /usr/bin/java
+
+    - name: Set java to Amazon Corretto 21 as default
+      ansible.builtin.command: >
+        alternatives --set java /usr/lib/jvm/amazon-corretto-21-x64-linux-jdk/bin/java
+
+    - name: Create Minecraft directory
+      ansible.builtin.file:
+        path: /home/ec2-user/minecraft-server
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: '0755'
+
+    - name: Download Minecraft server JAR (v1.20.6)
+      ansible.builtin.get_url:
+        url: https://piston-data.mojang.com/v1/objects/03f53214df599b9e39a560b94d0df5636858c32f/server.jar
+        dest: /home/ec2-user/minecraft-server/server.jar
+        mode: '0755'
+        owner: ec2-user
+        group: ec2-user
+
+    - name: Accept EULA
+      ansible.builtin.copy:
+        dest: /home/ec2-user/minecraft-server/eula.txt
+        content: "eula=true\n"
+        owner: ec2-user
+        group: ec2-user
+        mode: '0644'
+
+    - name: Create systemd service for Minecraft
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/minecraft.service
+        content: |
+          [Unit]
+          Description=Minecraft Server
+          After=network.target
+
+          [Service]
+          User=ec2-user
+          WorkingDirectory=/home/ec2-user/minecraft-server
+          ExecStart=/usr/bin/java -Xmx1024M -Xms1024M -jar server.jar nogui
+          Restart=always
+          RestartSec=10
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Minecraft service
+      ansible.builtin.systemd:
+        name: minecraft
+        enabled: true
+        state: started
